@@ -1,14 +1,16 @@
 from fastapi import APIRouter, UploadFile, File, Form, WebSocket, HTTPException, WebSocketDisconnect
 from typing import Optional
-from cloud_providers.openai.openai_api_stt import OpenAISTT
+from cloud_providers.openai_api_handler import OpenAIAPI
 from server.utils.logger import transcribe_logger
 import os
 import io
+import tempfile
+from pydub import AudioSegment
 
 router = APIRouter()
 
 # Initialize OpenAI client
-openai_client = OpenAISTT(api_key=os.getenv("OPENAI_API_KEY"))
+openai_client = OpenAIAPI(api_key=os.getenv("OPENAI_API_KEY"))
 
 @router.post("/transcribe")
 async def transcribe(
@@ -38,31 +40,43 @@ async def transcribe(
 @router.websocket("/stream-transcribe")
 async def stream_transcribe(websocket: WebSocket):
     await websocket.accept()
+    buffer = io.BytesIO()
     try:
         transcribe_logger.info("Started streaming transcription")
         
-        async def audio_stream():
-            while True:
-                try:
-                    chunk = await websocket.receive_bytes()
-                    yield chunk
-                except WebSocketDisconnect:
-                    transcribe_logger.info("WebSocket disconnected")
-                    break
-
-        async for result in openai_client.stream_transcribe(audio_stream(), {
-            "model": "whisper-1",
-            "window_size": 30,  # 30 seconds window
-            "sample_rate": 16000,
-            "language": "en",
-        }):
-            if "error" in result:
-                transcribe_logger.error(f"Transcription error: {result['error']}")
-                await websocket.send_json({"error": result['error']})
-            else:
-                await websocket.send_json(result)
-    except WebSocketDisconnect:
-        transcribe_logger.info("WebSocket disconnected")
+        while True:
+            try:
+                data = await websocket.receive_bytes()
+                buffer.write(data)
+                
+                # Process audio in 5-second chunks
+                if buffer.tell() >= 160000:  # 5 seconds of 16-bit audio at 16kHz
+                    buffer.seek(0)
+                    audio = AudioSegment.from_raw(buffer, sample_width=2, frame_rate=16000, channels=1)
+                    
+                    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_file:
+                        audio.export(temp_file.name, format="wav")
+                        temp_file_path = temp_file.name
+                    
+                    try:
+                        result = await openai_client.transcribe(temp_file_path, {
+                            "model": "whisper-1",
+                            "language": "en",
+                        })
+                        await websocket.send_json(result)
+                    except Exception as e:
+                        transcribe_logger.error(f"Transcription error: {str(e)}")
+                        await websocket.send_json({"error": str(e)})
+                    
+                    # Reset buffer, keeping any excess data
+                    excess = buffer.read()
+                    buffer = io.BytesIO()
+                    buffer.write(excess)
+            
+            except WebSocketDisconnect:
+                transcribe_logger.info("WebSocket disconnected")
+                break
+    
     except Exception as e:
         error_message = f"Streaming transcription error: {str(e)}"
         transcribe_logger.error(error_message)

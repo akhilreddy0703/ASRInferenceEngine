@@ -1,7 +1,6 @@
 from fastapi import APIRouter, Form, HTTPException
 from fastapi.responses import StreamingResponse
-from typing import Optional
-from cloud_providers.openai.openai_api_tts import OpenAITTS
+from cloud_providers.openai_api_handler import OpenAIAPI
 from server.utils.logger import tts_logger
 import os
 import io
@@ -9,7 +8,7 @@ import io
 router = APIRouter()
 
 # Initialize OpenAI client
-openai_client = OpenAITTS(api_key=os.getenv("OPENAI_API_KEY"))
+openai_client = OpenAIAPI(api_key=os.getenv("OPENAI_API_KEY"))
 
 @router.post("/text-to-speech")
 async def text_to_speech(

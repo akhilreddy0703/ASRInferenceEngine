@@ -1,13 +1,14 @@
 import asyncio
 from typing import Union, Dict, Any, AsyncGenerator
-from ..base import CloudProviderBase
+from .base import CloudProviderBase
 from openai import OpenAI
 import io
 import tempfile
 from pydub import AudioSegment
 import numpy as np
 
-class OpenAISTT(CloudProviderBase):
+
+class OpenAIAPI(CloudProviderBase):
     def __init__(self, api_key: str):
         self.client = OpenAI(api_key=api_key)
 
@@ -40,7 +41,7 @@ class OpenAISTT(CloudProviderBase):
 
     async def stream_transcribe(self, audio_stream: AsyncGenerator[bytes, None], options: Dict[str, Any]) -> AsyncGenerator[Dict[str, Any], None]:
         buffer = b""
-        window_size = options.get("window_size", 30)  # 30 seconds of audio
+        window_size = options.get("window_size", 10)  # 30 seconds of audio
         sample_rate = options.get("sample_rate", 16000)
         window_bytes = window_size * sample_rate * 2  # 16-bit audio
         
@@ -92,5 +93,20 @@ class OpenAISTT(CloudProviderBase):
                 yield {"error": str(e)}
 
     async def text_to_speech(self, text: str, options: Dict[str, Any]) -> bytes:
-        # This method is implemented in openai_api_tts.py
-        raise NotImplementedError("Text-to-speech is not implemented in this class")
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, self._sync_text_to_speech, text, options)
+
+    def _sync_text_to_speech(self, text: str, options: Dict[str, Any]) -> bytes:
+        response = self.client.audio.speech.create(
+            model=options.get("model", "tts-1"),
+            voice=options.get("voice", "alloy"),
+            input=text,
+            response_format=options.get("response_format", "mp3"),
+            speed=options.get("speed", 1.0)
+        )
+        
+        buffer = io.BytesIO()
+        for chunk in response.iter_bytes():
+            buffer.write(chunk)
+        buffer.seek(0)
+        return buffer.getvalue()

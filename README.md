@@ -72,6 +72,7 @@ python server/main.py
 
 This will start the FastAPI server, typically on `http://localhost:8000`.
 
+## `Foe more details check the [API docs](docs/api.md)`
 
 ## Logging
 

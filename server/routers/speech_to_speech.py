@@ -1,15 +1,12 @@
-from fastapi import APIRouter, UploadFile, File, Form, WebSocket, HTTPException
-from fastapi.responses import StreamingResponse, JSONResponse
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends
+from fastapi.responses import JSONResponse
+import base64
 from typing import Optional
+from server.utils.auth import get_api_key
 from cloud_providers.openai_api_handler import OpenAIAPI
 from server.utils.logger import speech_to_speech_logger as logger
-import os
-import asyncio
 
 router = APIRouter()
-
-# Initialize OpenAI clients
-openai_client = OpenAIAPI(api_key=os.getenv("OPENAI_API_KEY"))
 
 @router.post("/speech-to-speech")
 async def speech_to_speech(
@@ -18,10 +15,12 @@ async def speech_to_speech(
     tts_model: str = Form("tts-1"),
     voice: str = Form("alloy"),
     language: Optional[str] = Form(None),
+    api_key: str = Depends(get_api_key)
 ):
     try:
         logger.info(f"Processing speech-to-speech for file: {file.filename}")
         contents = await file.read()
+        openai_client = OpenAIAPI(api_key=api_key)
         
         # Step 1: Speech-to-Text
         transcription_result = await openai_client.transcribe(contents, {
@@ -38,64 +37,15 @@ async def speech_to_speech(
         })
         logger.info("Text-to-speech conversion completed")
         
+        # Encode audio content as base64
+        audio_base64 = base64.b64encode(audio_content).decode('utf-8')
+        
         # Prepare the response
-        def iterfile():
-            yield audio_content
-        
-        headers = {
-            'Content-Disposition': f'attachment; filename="speech_output.mp3"'
-        }
-        
-        return StreamingResponse(
-            iterfile(),
-            media_type="audio/mpeg",
-            headers=headers,
-            background=JSONResponse(content={"transcription": transcription})
-        )
+        return JSONResponse(content={
+            "transcription": transcription,
+            "audio": audio_base64
+        })
     except Exception as e:
         error_message = f"Speech-to-speech processing failed: {str(e)}"
         logger.error(error_message)
         raise HTTPException(status_code=500, detail=error_message)
-
-@router.websocket("/stream-speech-to-speech")
-async def stream_speech_to_speech(websocket: WebSocket):
-    await websocket.accept()
-    try:
-        logger.info("Started streaming speech-to-speech")
-        
-        # Receive configuration
-        config = await websocket.receive_json()
-        stt_model = config.get("stt_model", "whisper-1")
-        tts_model = config.get("tts_model", "tts-1")
-        voice = config.get("voice", "alloy")
-        language = config.get("language")
-        duration = config.get("duration", 10)  # Duration in seconds
-        
-        # Streaming audio input
-        async def audio_stream():
-            start_time = asyncio.get_event_loop().time()
-            while asyncio.get_event_loop().time() - start_time < duration:
-                yield await websocket.receive_bytes()
-        
-        # Speech-to-Text
-        full_transcription = ""
-        async for result in openai_client.stream_transcribe(audio_stream(), {"model": stt_model, "language": language}):
-            if "error" in result:
-                await websocket.send_json({"error": result["error"]})
-            else:
-                full_transcription += result["text"] + " "
-                await websocket.send_json({"transcription": result["text"]})
-        
-        # Text-to-Speech
-        audio_content = await openai_client.text_to_speech(full_transcription, {"model": tts_model, "voice": voice})
-        
-        # Send the final audio
-        await websocket.send_bytes(audio_content)
-        
-    except Exception as e:
-        error_message = f"Streaming speech-to-speech error: {str(e)}"
-        logger.error(error_message)
-        await websocket.send_json({"error": error_message})
-    finally:
-        logger.info("Ended streaming speech-to-speech")
-        await websocket.close()

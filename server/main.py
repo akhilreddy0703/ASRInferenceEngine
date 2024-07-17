@@ -7,7 +7,7 @@ sys.path.append(str(project_root))
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from server.routers import transcribe, tts, speech_to_speech
+from server.routers import transcribe, tts, speech_to_speech, llm
 from server.utils.logger import main_logger
 
 app = FastAPI(title="Inference Server for Cloud Providers")
@@ -23,6 +23,7 @@ app.add_middleware(
 app.include_router(transcribe.router, prefix="/api/v1", tags=["transcribe"])
 app.include_router(tts.router, prefix="/api/v1", tags=["tts"])
 app.include_router(speech_to_speech.router, prefix="/api/v1", tags=["speech-to-speech"])
+app.include_router(llm.router, prefix="/api/v1", tags=["llm"])
 
 @app.get("/")
 async def root():

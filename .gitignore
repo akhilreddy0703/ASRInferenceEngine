@@ -3,6 +3,5 @@ __pycache__/
 *.pyc
 .env
 logs/
-data/
 outputs/
 *.zip
